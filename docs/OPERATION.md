@@ -1,7 +1,7 @@
 # 운영 가이드 — 공공정보화 RFP 제안전략 수립 시스템
 
 > 대상 환경: **Mac Mini M5 Pro** (Apple Silicon, macOS)  
-> 최초 작성: 2026-06-19 · 최종 수정: 2026-06-22
+> 최초 작성: 2026-06-19 · 최종 수정: 2026-06-23 (Phase 4 E2E 테스트 완료 반영)
 
 ---
 
@@ -285,9 +285,11 @@ streamlit run src/app/streamlit_app.py --server.port 8501 --server.address 192.1
 #### STEP A — RFP 업로드 및 자동 추출
 
 1. **"📋 제안전략 수립"** 탭 클릭
-2. 사이드바에서 LLM 선택:
+2. 사이드바에서 LLM 및 Temperature 설정:
    - 기본 LLM: `🏠 Qwen3.5 (로컬)` 또는 `☀️ Solar Pro`
+   - 추출 Temperature: 0.1 권장 (낮을수록 RFP 내용 정확 추출)
    - 전략 생성 LLM: `🤖 Claude` (권장) 또는 `☀️ Solar Pro`
+   - 전략 Temperature: 0.65 권장 (높을수록 창의적 전략)
 3. RFP PDF 파일 업로드 (테스트용: 나라장터에서 공공 RFP 1건 다운로드)
 4. **🚀 자동 분석 시작 (STEP 1~3)** 클릭
 5. 각 단계 expander에서 결과 확인:
@@ -532,6 +534,13 @@ LLM이 JSON 대신 마크다운이나 자연어로 응답한 경우입니다.
 
 1. **다른 LLM으로 전환**: 사이드바에서 Solar Pro 또는 Claude로 변경 후 새 세션 시작
 2. **새 세션 재시도**: 같은 LLM으로 재시도 (비결정적 응답이라 두 번째에 성공하기도 함)
+
+### STEP 5·7 결과가 마크다운이 아닌 JSON 텍스트로 출력됨
+
+Qwen3 로컬 모델이 JSON 형식의 입력에 반응해 JSON으로 응답하는 경우입니다.
+
+- 코드 자동 변환(`_json_to_markdown`)이 실패한 경우 전략 생성 LLM을 `🤖 Claude` 또는 `☀️ Solar Pro`로 변경 후 재시도
+- 또는 전략 Temperature를 낮추어 재시도
 
 ### 슬라이드 이미지가 표시되지 않음 ("이미지 없음")
 

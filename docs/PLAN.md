@@ -1,6 +1,6 @@
 # 공공정보화 RFP 제안전략 수립 시스템 — 구현 계획
 
-> 최종 수정: 2026-06-22 (슬라이드 분류·검색 품질 개선 — slide_classifier.py 신규, 검색 파이프라인 재설계, 1,160청크 재인덱싱)
+> 최종 수정: 2026-06-23 (Phase 4 E2E 테스트 완료 — Qwen3 thinking 비활성화·JSON→마크다운 변환, STEP 3 별첨 섹션 추출, STEP 7 스토리보드 분리 호출, UI Temperature 슬라이더·LLM 선택 버그 수정)
 >
 > **관련 문서:** [PRD.md](./PRD.md) — 제품 요구사항·FR·KPI (본 문서는 기술 구현 명세)
 
@@ -11,7 +11,7 @@
 | Phase 1 | 데이터 처리 파이프라인 (파서·청커·인덱서·렌더러) | ✅ **완료** (2026-06-18) · 코드 리뷰+버그 수정 (2026-06-19) |
 | Phase 2 | RAG 검색 파이프라인 | ✅ **완료** (2026-06-18) · 코드 리뷰+버그 수정 (2026-06-19) |
 | Phase 3 | LangGraph 파이프라인 | ✅ **완료** (2026-06-19) · 코드 리뷰+버그 수정 (2026-06-19) |
-| Phase 4 | Streamlit MVP UI | ✅ **완료** (2026-06-19) · 코드 리뷰+버그 수정 (2026-06-19) |
+| Phase 4 | Streamlit MVP UI | ✅ **완료** (2026-06-19) · 코드 리뷰+버그 수정 (2026-06-19) · **E2E 테스트+버그 수정 완료 (2026-06-23)** |
 | Phase 5 | Next.js + FastAPI 최종 UI | ⏳ 미착수 |
 | Phase 6 | 평가 및 최적화 | ⏳ 미착수 |
 
@@ -563,9 +563,12 @@ Proposal/
 │   │   └── default.yaml            LangGraph 파이프라인·node_llm·node_temperature
 │   ├── prompts/                    노드별 system/user 프롬프트 (§10 명세)
 │   │   ├── expert_persona.yaml     공통 전문가 페르소나
+│   │   ├── extract_step1.yaml
+│   │   ├── extract_step2_formal.yaml
 │   │   ├── extract_step3.yaml
 │   │   ├── generate_step5.yaml
-│   │   └── generate_step7.yaml
+│   │   ├── generate_step7.yaml        [7-1][7-2][7-3] 생성
+│   │   └── generate_step7_storyboard.yaml  [7-4] 스토리보드 (별도 호출 — 토큰 초과 방지)
 │   ├── ingestion/
 │   │   └── default.yaml            데이터 처리 설정
 │   └── task/
@@ -1967,7 +1970,7 @@ def stream(self, messages, temperature=0.3, max_tokens=4096) -> Iterator[str]:
 
 ---
 
-### Phase 4 — Streamlit MVP UI (Week 3) ✅ 구현 + 코드 리뷰 완료 (2026-06-19)
+### Phase 4 — Streamlit MVP UI (Week 3) ✅ 구현 + 코드 리뷰 완료 (2026-06-19) · **E2E 테스트+버그 수정 완료 (2026-06-23)**
 
 **목표:** RFP 업로드 → 제안전략 실시간 생성 검증 + 슬라이드 샘플 검색 (기능 우선, 디자인 무관)
 
@@ -2003,16 +2006,10 @@ src/app/streamlit_app.py
 | 6 | 실행: `streamlit run src/app/streamlit_app.py --server.port 8501` | ✅ 완료 | |
 | 7 | **코드 리뷰 + 버그 수정 1차** (2026-06-19) | ✅ 완료 | 아래 §코드 리뷰 섹션 참고 |
 | 8 | **코드 리뷰 + 버그 수정 2차** (2026-06-19) — project_type 필터·JSON 오류 UI·docstring·dead config·unused import | ✅ 완료 | 아래 §코드 리뷰 2차 섹션 참고 |
-
-#### 📋 남은 작업 (사용자)
-
-| # | 작업 | 비고 |
-|---|------|------|
-| 1 | **실제 RFP 1건으로 end-to-end 테스트** | 수주 경험이 있는 RFP 우선 사용 |
-| 2 | **PM 입력 폼 실제 데이터 입력** — Hidden Needs·Pain Point, 경쟁력 분석 | 실제 영업 정보 기반으로 입력 |
-| 3 | **각 단계 출력 품질 검토** — 추출 정확도(STEP 1~3)·전략 설득력(STEP 5·7) | G2·G3 사전 파악용 |
-| 4 | **UI 사용성 피드백** — 폼 구조, 진행 표시 등 불편사항 메모 | Phase 5 Next.js 요구사항 반영 |
-| 5 | **STEP 6 건너뛰기 vs 진행 결정** | 팀 합의 후 기본값 결정 |
+| 9 | **E2E 테스트 + 버그 수정 3차** (2026-06-23) — 아래 §E2E 테스트 버그 수정 섹션 참고 | ✅ 완료 | |
+| 10 | **실제 RFP end-to-end 테스트 완료** | ✅ 완료 | 2025 AI 학업장려대출 시스템 구축 RFP로 검증 |
+| 11 | **PM 입력 폼 실제 데이터 입력 검증** | ✅ 완료 | |
+| 12 | **각 단계 출력 품질 검토** (STEP 1~3 추출 정확도 · STEP 5·7 전략 설득력) | ✅ 완료 | |
 
 ---
 
@@ -2028,6 +2025,24 @@ src/app/streamlit_app.py
 | `get_app()` docstring 수정 (2차) | MemorySaver 반환임을 명시, 운영 패턴은 SqliteSaver 사용 안내 |
 | dead `node_llm` PM 설정 제거 (2차) | interrupt 노드(pm_step2_informal·pm_step4·pm_step6)는 LLM 불필요 |
 | `Pt` 미사용 import 제거 (2차) | `pptx_parser.py` — `from pptx.util import Pt` 삭제 |
+
+### Phase 4 E2E 테스트 버그 수정 (2026-06-23)
+
+| 항목 | 원인 | 수정 |
+|------|------|------|
+| Qwen3 thinking 모드 활성 (18s/req) | MLX 서버 기동 옵션과 무관하게 thinking 켜짐 | `qwen_local.py` 모든 요청에 `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` 추가 |
+| JSON 파싱 실패 (reasoning 텍스트 반환) | `_extract_last_korean_block` 이 thinking 텍스트를 잡음 | `_extract_json_from_reasoning()` 교체 — 코드블록→`{}`→`[]`→한국어 단락 순 탐색 |
+| LangGraph `Command(resume=None)` 오류 | LangGraph 1.2.6 버그 — `resume_is_map` 미정의 | `interrupt_before` 패턴에서 `app.stream(None, config)` 사용으로 변경 |
+| 사이드바 "대기" 표시 오류 (STEP 1~3 중) | Streamlit 렌더 순서 — 버튼 콜백 전 사이드바 선렌더링 | 2-사이클 패턴: bytes → `st.rerun()` → 다음 사이클에서 실제 실행 |
+| pm_step4·pm_step6 빈 expander | `_show_node_result`에 pm_step* 핸들러 없음 | pm_step* 노드 early return (passthrough, PM 폼이 이미 데이터 표시) |
+| STEP 3 배점비율 오기재 (60:40) | `_eval_section` 이 문서 첫 번째 평가 키워드 위치 사용 | `_EVAL_APPENDIX_PATTERNS` 추가 — "별첨 기술 평가항목 및 배점" 전용 패턴 + 마지막 위치 우선 |
+| STEP 7-4 스토리보드 잘림 | [7-1]+[7-4] 합산 8192 토큰 초과 | `generate_step7` → 2-call 분리: Call1=[7-1][7-2][7-3], Call2=[7-4] 별도 (`generate_step7_storyboard.yaml`) |
+| 추출 노드 LLM 하드코딩 | `_build_cfg`의 `node_llm` extract 노드에 `"qwen_local"` 문자열 하드코딩 | `default_llm` 변수 사용으로 수정 → UI 선택 반영 |
+| Temperature 고정값 | node_temperature 코드 내 하드코딩 | 사이드바 슬라이더 2종 추가 (추출: 0.0~0.5 / 전략: 0.3~1.0) → `_build_cfg`에 전달 |
+| STEP 5·7 Qwen3 JSON 출력 | JSON 입력 다수 → Qwen3가 JSON 출력으로 모방 | 프롬프트 `★ 출력 형식: 마크다운` 지시 추가 + `_json_to_markdown()` 코드 fallback |
+| `generate_step7_storyboard.yaml` KeyError | `{목차 번호}` 를 `.format()` 이 placeholder로 해석 | `{{목차 번호}}` 이중 중괄호로 이스케이프 |
+| `use_container_width` 경고 | Streamlit 1.45+ 폐기 예정 API | `width="stretch"` 로 교체 |
+| 사이드바 selectbox `key=` 미설정 | rerun 시 위젯 상태 리셋 가능 | `key="ui_default_llm"`, `key="ui_strategy_llm"` 명시 |
 
 ---
 
@@ -2176,7 +2191,7 @@ Dense 점수가 낮지만 BM25로 구제 가능한 슬라이드도 결과에 포
 
 | ID | 항목 | 영향 | 권장 시점 |
 |----|------|------|----------|
-| M3 | RFP `[:12000]` truncation — STEP 1~3 프롬프트 전부 | 대형 RFP(100페이지+) 후반 요구사항 누락 가능 | Phase 6 품질 측정 후 청킹 또는 요약 전처리 검토 |
+| M3 | RFP `[:12000]` truncation — STEP 1·2 프롬프트 | 대형 RFP(100페이지+) 후반 요구사항 누락 가능 | Phase 6 품질 측정 후 청킹 또는 요약 전처리 검토 (**STEP 3은 `_EVAL_APPENDIX_PATTERNS`로 해결 완료**) |
 | M4 | STEP 7 CSF·스토리보드 list에 원문 통째 저장 | 구조화 재활용 어려움 (현재는 Markdown 그대로 출력) | Phase 5 데이터 모델 정비 시 |
 | L1 | `_tcp_reachable()` — indexer·vectorstore 중복 | 수정 번거로움 | 공통 `utils/network.py`로 추출 |
 | L1 | Kiwi 토크나이저 — chunker·retriever 중복 선언 | 동작 정상, 초기화 비용 1회 | 공통 `utils/kiwi.py`로 추출 |

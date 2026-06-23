@@ -11,6 +11,26 @@ from ._prompt_utils import load_prompt as _load_prompt
 
 log = logging.getLogger(__name__)
 
+# LLM 반복 루프 감지: 10~80자 구절이 5회 이상 연속 등장
+_REPEAT_RE = re.compile(r'(.{10,80})\1{4,}', re.DOTALL)
+
+
+def _truncate_repetition(text: str) -> str:
+    """LLM 반복 루프(동일 구절 5회+ 연속) 감지 → 첫 1회 후 잘라냄."""
+    m = _REPEAT_RE.search(text)
+    if not m:
+        return text
+    cut_at = m.start() + len(m.group(1))
+    log.warning(
+        "LLM 반복 루프 감지: %r × N회 (위치 %d) → %d자에서 잘라냄",
+        m.group(1)[:30], m.start(), cut_at,
+    )
+    return (
+        text[:cut_at].rstrip()
+        + "\n\n> ⚠️ LLM 반복 오류로 해당 내용이 잘렸습니다. "
+        "이 항목을 직접 보완하거나 [재생성] 버튼을 사용하세요."
+    )
+
 
 def _format_list(items: list | None, indent: str = "- ") -> str:
     if not items:
@@ -69,6 +89,7 @@ def generate_step5_node(state: GraphState, cfg: DictConfig) -> GraphState:
         {"role": "user", "content": user_content},
     ]
     raw = llm.generate(messages, temperature=temp)
+    raw = _truncate_repetition(raw)
 
     # [5-1]과 [5-2] 섹션 분리
     step5_1, step5_2 = _split_step5(raw)
@@ -84,8 +105,41 @@ def generate_step5_node(state: GraphState, cfg: DictConfig) -> GraphState:
     }
 
 
+def _json_to_markdown(text: str) -> str:
+    """JSON으로 출력된 전략 텍스트를 마크다운으로 변환 (Qwen3 fallback).
+
+    JSON 최상위 키를 ### 헤더로, 문자열 값을 본문으로, 리스트 항목을 - 불릿으로 변환.
+    JSON이 아니면 원문 그대로 반환.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return text
+
+    try:
+        data = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return text
+
+    lines: list[str] = []
+    for key, val in data.items():
+        lines.append(f"### {key}")
+        if isinstance(val, list):
+            for item in val:
+                lines.append(f"- {item}" if isinstance(item, str) else f"- {json.dumps(item, ensure_ascii=False)}")
+        elif isinstance(val, dict):
+            for k2, v2 in val.items():
+                lines.append(f"**{k2}**: {v2}")
+        else:
+            lines.append(str(val))
+        lines.append("")
+
+    log.warning("STEP 5/7: JSON 출력 감지 → 마크다운 변환 적용 (Qwen3 fallback)")
+    return "\n".join(lines).strip()
+
+
 def _split_step5(text: str) -> tuple[str, str]:
     """[5-1], [5-2] 섹션 분리. 실패 시 전체를 5-1에 담음."""
+    text = _json_to_markdown(text)
     pattern = r"###\s*\[5-2\]"
     match = re.search(pattern, text)
     if match:
@@ -98,44 +152,110 @@ def _split_step5(text: str) -> tuple[str, str]:
     return text.strip(), ""
 
 
+def _compress_step1(step1: dict) -> str:
+    """STEP 7 입력용 step1 요약 (full JSON 대신 핵심만)."""
+    return (
+        f"사업명: {step1.get('project_name', '')}\n"
+        f"발주기관: {step1.get('agency', '')}\n"
+        f"도메인: {step1.get('domain', '')}\n"
+        f"사업 범위: {step1.get('project_scope', '')}"
+    )
+
+
+def _compress_step3_high(eval_criteria: dict) -> str:
+    """STEP 3에서 배점 상위 항목만 추출."""
+    high = eval_criteria.get("high_score_items", [])
+    if not high:
+        return eval_criteria.get("implications", "(평가항목 정보 없음)")
+    lines: list[str] = []
+    for h in high:
+        if isinstance(h, dict):
+            name = h.get("item", "")
+            score = h.get("score", "")
+            focus = h.get("proposal_focus", "")
+            lines.append(f"- {name}({score}점): {focus}")
+        else:
+            lines.append(f"- {h}")
+    if imp := eval_criteria.get("implications", ""):
+        lines.append(f"\n시사점: {imp}")
+    return "\n".join(lines)
+
+
+def _compress_step4(comp: dict) -> str:
+    """STEP 4 경쟁력에서 강점/약점만 추출."""
+    vs = comp.get("vs_competitors", {})
+    strengths = vs.get("strengths", [])
+    weaknesses = vs.get("weaknesses", [])
+    parts: list[str] = []
+    if strengths:
+        parts.append("강점: " + " / ".join(strengths))
+    if weaknesses:
+        parts.append("약점(만회 필요): " + " / ".join(weaknesses))
+    return "\n".join(parts) or "(없음)"
+
+
 def generate_step7_node(state: GraphState, cfg: DictConfig) -> GraphState:
-    """STEP 7 — 사업수행전략 + MECE 이행방안 생성 (LLM API 권장)."""
-    prompt = _load_prompt("generate_step7")
+    """STEP 7 — 사업수행전략 생성 (LLM API 권장).
 
-    # STEP 6 의사결정 사항 (있을 경우 포함)
+    호출 1: [7-1] CSF + [7-2] 전략요약 + [7-3] MECE 이행방안
+    호출 2: [7-4] 제안서 간이 스토리보드 (별도 호출 — 토큰 초과 방지)
+    """
+    llm = get_llm(cfg, "generate_step7")
+    temp = get_node_temperature(cfg, "generate_step7")
+    meta = dict(state.get("metadata") or {})
+
+    # ── 입력 압축 ──────────────────────────────────────────────────
+    step1 = state.get("step1_business_overview") or {}
+    step3 = state.get("step3_eval_criteria") or {}
+    step4 = state.get("step4_competitiveness") or {}
     decisions = state.get("step6_decisions") or []
-    if decisions and not state.get("skip_step6", False):
-        step6_section = "## STEP 6 의사결정 사항\n" + _format_dict_pretty(decisions)
-    else:
-        step6_section = ""
+    step6_section = (
+        "## STEP 6 의사결정 사항\n" + _format_dict_pretty(decisions)
+        if decisions and not state.get("skip_step6", False)
+        else ""
+    )
 
-    user_content = prompt["user"].format(
-        step1_business_overview=_format_dict_pretty(state.get("step1_business_overview")),
-        step2_formal_requirements=_format_dict_pretty(state.get("step2_formal_requirements")),
-        step2_informal_requirements=_format_dict_pretty(state.get("step2_informal_requirements")),
-        step3_eval_criteria=_format_dict_pretty(state.get("step3_eval_criteria")),
-        step4_competitiveness=_format_dict_pretty(state.get("step4_competitiveness")),
+    # ── 호출 1: [7-1] + [7-2] + [7-3] ───────────────────────────
+    prompt_main = _load_prompt("generate_step7")
+    user_main = prompt_main["user"].format(
+        step1_summary=_compress_step1(step1),
+        step3_high_score=_compress_step3_high(step3),
+        step4_summary=_compress_step4(step4),
         step6_section=step6_section,
         step5_1_competitive_diff=state.get("step5_1_competitive_diff", "(없음)"),
         step5_2_issue_solution=state.get("step5_2_issue_solution", "(없음)"),
     )
+    raw_main = llm.generate(
+        [{"role": "system", "content": prompt_main["system"]},
+         {"role": "user", "content": user_main}],
+        temperature=temp,
+    )
+    csf, summary, plan = _split_step7_main(_json_to_markdown(_truncate_repetition(raw_main)))
+    log.info("STEP 7 호출1 완료: CSF=%d자, 요약=%d자, 이행방안=%d자", len(csf), len(summary), len(plan))
 
-    llm = get_llm(cfg, "generate_step7")
-    temp = get_node_temperature(cfg, "generate_step7")
+    # ── 호출 2: [7-4] 스토리보드 ─────────────────────────────────
+    prompt_sb = _load_prompt("generate_step7_storyboard")
+    # plan 요약: 각 영역 제목만 추출 (스토리보드 컨텍스트용)
+    plan_summary = "\n".join(
+        line for line in plan.splitlines()
+        if line.strip().startswith(("####", "###", "**A.", "**B.", "**C.", "**D."))
+    ) or plan[:1000]
+    user_sb = prompt_sb["user"].format(
+        csf_text=csf,
+        plan_summary=plan_summary,
+        step3_high_score=_compress_step3_high(step3),
+    )
+    raw_sb = llm.generate(
+        [{"role": "system", "content": prompt_sb["system"]},
+         {"role": "user", "content": user_sb}],
+        temperature=temp,
+    )
+    storyboard = _truncate_repetition(raw_sb).strip()
+    log.info("STEP 7 호출2 완료: 스토리보드=%d자", len(storyboard))
 
-    messages = [
-        {"role": "system", "content": prompt["system"]},
-        {"role": "user", "content": user_content},
-    ]
-    raw = llm.generate(messages, temperature=temp)
-
-    csf, summary, plan, storyboard = _split_step7(raw)
-
-    log.info("STEP 7 완료: CSF=%d자, 요약=%d자, 이행방안=%d자", len(csf), len(summary), len(plan))
-    meta = dict(state.get("metadata") or {})
     meta.setdefault("used_llm_nodes", {})["generate_step7"] = type(llm).__name__
     return {
-        "step7_1_csf": [csf],          # 원문 그대로 저장 (파싱은 UI에서 처리)
+        "step7_1_csf": [csf],
         "step7_2_strategy_summary": summary,
         "step7_3_execution_plan": plan,
         "step7_4_storyboard": [storyboard],
@@ -144,19 +264,16 @@ def generate_step7_node(state: GraphState, cfg: DictConfig) -> GraphState:
     }
 
 
-def _split_step7(text: str) -> tuple[str, str, str, str]:
-    """[7-1]~[7-4] 섹션 분리. 실패 시 전체를 csf에 담음."""
-    headers = [r"###\s*\[7-2\]", r"###\s*\[7-3\]", r"###\s*\[7-4\]"]
-    # 미발견 헤더는 len(text)로 설정 → text[a:len(text)] = text[a:] (마지막 문자 유실 없음)
+def _split_step7_main(text: str) -> tuple[str, str, str]:
+    """[7-1]~[7-3] 분리 (스토리보드 제외)."""
+    headers = [r"###\s*\[7-2\]", r"###\s*\[7-3\]"]
     positions: list[int] = []
     for h in headers:
         m = re.search(h, text)
         positions.append(m.start() if m else len(text))
 
-    p0, p1, p2 = positions
+    p0, p1 = positions
     csf = text[0:p0].strip()
     summary = text[p0:p1].strip() if p0 < len(text) else ""
-    plan = text[p1:p2].strip() if p1 < len(text) else ""
-    storyboard = text[p2:].strip() if p2 < len(text) else ""
-
-    return csf, summary, plan, storyboard
+    plan = text[p1:].strip() if p1 < len(text) else ""
+    return csf, summary, plan

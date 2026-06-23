@@ -20,7 +20,7 @@ class GraphState(TypedDict, total=False):
     # {hidden_needs: [...], pain_points: [...], key_issues: [...]}
 
     step3_eval_criteria: dict
-    # {eval_items: [...], high_score_items: [...], eval_characteristics: str, implications: str}
+    # {total_score, eval_items(score 내림차순): [...], high_score_items: [{item, score, proposal_focus}], implications: str}
 
     # ── STEP 4: PM 입력 (경쟁력 분석) ──────────────────────────────
     step4_competitiveness: dict

@@ -66,6 +66,8 @@ def _build_cfg(
     default_llm: str,
     step5_llm: str,
     step7_llm: str,
+    extract_temp: float = 0.1,
+    strategy_temp: float = 0.65,
     embedding_device: str = "cpu",
     reranker_device: str = "cpu",
 ) -> OmegaConf:
@@ -93,7 +95,7 @@ def _build_cfg(
             "_target_": llm_targets[default_llm],
             "model": llm_models[default_llm],
             "temperature": 0.3,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "base_url": base_url,
             "api_key": "",
         },
@@ -112,22 +114,22 @@ def _build_cfg(
         },
         "pipeline": {
             "node_llm": {
-                "extract_step1": "qwen_local",
-                "extract_step2_formal": "qwen_local",
-                "extract_step3": "qwen_local",
+                "extract_step1": default_llm,
+                "extract_step2_formal": default_llm,
+                "extract_step3": default_llm,
                 "generate_step5": step5_llm,
                 "generate_step7": step7_llm,
                 "slide_explainer": default_llm,
             },
             "node_temperature": {
-                "extract_step1": 0.1,
-                "extract_step2_formal": 0.1,
-                "extract_step3": 0.1,
+                "extract_step1": extract_temp,
+                "extract_step2_formal": extract_temp,
+                "extract_step3": extract_temp,
                 "pm_step2_informal": 0.2,
                 "pm_step4": 0.2,
                 "pm_step6": 0.3,
-                "generate_step5": 0.6,
-                "generate_step7": 0.65,
+                "generate_step5": strategy_temp,
+                "generate_step7": strategy_temp,
                 "slide_explainer": 0.3,
             },
         },
@@ -197,16 +199,14 @@ def _get_pipeline_app(cfg):
 
 # ── 파이프라인 실행 헬퍼 ──────────────────────────────────────────
 
-def _run_until_interrupt(app, input_or_command, config: dict, step_container):
+def _run_until_interrupt(app, input_or_none, config: dict, step_container):
     """스트림 이벤트를 소비하며 단계별 결과를 UI에 표시.
 
     interrupt 또는 END까지 실행. 최종 상태 dict 반환.
     """
-    from langgraph.types import Command
-
     outputs: dict = {}
     with step_container:
-        for event in app.stream(input_or_command, config=config, stream_mode="updates"):
+        for event in app.stream(input_or_none, config=config, stream_mode="updates"):
             for node_name, node_output in event.items():
                 if node_name.startswith("__"):
                     continue
@@ -226,6 +226,10 @@ def _warn_if_parse_failed(data, step_label: str):
 
 def _show_node_result(node_name: str, output: dict):
     """노드 실행 결과를 expander로 표시."""
+    # PM 입력 패스스루 노드는 별도 표시 없이 스킵 (PM이 이미 폼에서 입력 완료)
+    if node_name in ("pm_step2_informal", "pm_step4", "pm_step6"):
+        return
+
     labels = {
         "parse_rfp": "📄 RFP 텍스트 추출",
         "extract_step1": "🏢 STEP 1: 사업개요 구조화",
@@ -256,7 +260,7 @@ def _show_node_result(node_name: str, output: dict):
         elif node_name == "extract_step3":
             data = output.get("step3_eval_criteria", {})
             _warn_if_parse_failed(data, "STEP 3")
-            st.json(data)
+            _render_eval_criteria(data)
 
         elif node_name == "retrieve_rag":
             meta = output.get("metadata", {})
@@ -273,6 +277,60 @@ def _show_node_result(node_name: str, output: dict):
             st.markdown(md[:300] + "…" if len(md) > 300 else md)
 
 
+def _render_eval_criteria(data: dict):
+    """STEP 3 평가항목 결과를 배점 순위 테이블 + 강조 항목으로 표시."""
+    if not isinstance(data, dict) or "eval_items" not in data:
+        st.json(data)
+        return
+
+    total = data.get("total_score", 100)
+    items = data.get("eval_items", [])
+    n_unverified = sum(1 for it in items if it.get("score_unverified"))
+
+    st.caption(f"총 배점: {total}점 | 항목 수: {len(items)}개 (배점 내림차순)")
+
+    if n_unverified:
+        st.warning(
+            f"⚠️ {n_unverified}개 항목의 배점이 RFP 텍스트에서 확인되지 않았습니다 (⚠️ 표시). "
+            "LLM이 잘못 읽었을 수 있으니 RFP 원문과 대조 후 수정하세요.",
+            icon=None,
+        )
+
+    if items:
+        rows = []
+        for it in items:
+            score_val = it.get("score", "")
+            score_str = str(score_val) if score_val not in (None, "") else ""
+            score_display = f"⚠️ {score_str}" if it.get("score_unverified") else score_str
+            rows.append({
+                "순위": str(it.get("rank", "")),
+                "평가항목": it.get("item", ""),
+                "배점": score_display,
+                "비중(%)": it.get("weight_pct", ""),
+                "설명": it.get("description", ""),
+            })
+        st.dataframe(rows, width="stretch", hide_index=True)
+
+    high = data.get("high_score_items", [])
+    if high:
+        st.markdown("**제안서 강조 항목 (배점 상위)**")
+        for h in high:
+            if not isinstance(h, dict):
+                st.markdown(f"- {h}")
+                continue
+            item_name = h.get("item", "")
+            score = h.get("score", "")
+            focus = h.get("proposal_focus", "")
+            # high_score_items의 배점도 검증
+            orig = next((it for it in items if it.get("item") == item_name), {})
+            warn = " ⚠️" if orig.get("score_unverified") else ""
+            score_str = f" ({score}점{warn})" if score else ""
+            st.markdown(f"- **{item_name}**{score_str}: {focus}")
+
+    if imp := data.get("implications", ""):
+        st.info(imp)
+
+
 def _current_graph_state(app, config: dict) -> dict:
     """현재 스냅샷 상태 조회."""
     try:
@@ -284,24 +342,40 @@ def _current_graph_state(app, config: dict) -> dict:
 
 # ── 사이드바 ─────────────────────────────────────────────────────
 
-def _render_sidebar() -> tuple[str, str, str]:
+def _render_sidebar() -> tuple[str, str, str, float, float]:
     with st.sidebar:
         st.title("⚙️ LLM 설정")
+
+        _LLM_LABELS = {"qwen_local": "🏠 Qwen3.5 (로컬)", "solar": "☀️ Solar Pro", "claude": "🤖 Claude"}
 
         st.markdown("**기본 LLM (추출·구조화)**")
         default_llm = st.selectbox(
             "기본 LLM",
             ["qwen_local", "solar", "claude"],
-            format_func=lambda x: {"qwen_local": "🏠 Qwen3.5 (로컬)", "solar": "☀️ Solar Pro", "claude": "🤖 Claude"}[x],
+            format_func=lambda x: _LLM_LABELS[x],
             label_visibility="collapsed",
+            key="ui_default_llm",
+        )
+        extract_temp = st.slider(
+            "Temperature — 추출 정확도 ↔ 유연성",
+            min_value=0.0, max_value=0.5, value=0.1, step=0.05,
+            key="ui_extract_temp",
+            help="낮을수록 RFP 내용을 정확하게 추출, 높을수록 해석 유연성 증가",
         )
 
         st.markdown("**전략 생성 LLM (STEP 5·7 권장)**")
         strategy_llm = st.selectbox(
             "전략 LLM",
             ["claude", "solar", "qwen_local"],
-            format_func=lambda x: {"qwen_local": "🏠 Qwen3.5 (로컬)", "solar": "☀️ Solar Pro", "claude": "🤖 Claude"}[x],
+            format_func=lambda x: _LLM_LABELS[x],
             label_visibility="collapsed",
+            key="ui_strategy_llm",
+        )
+        strategy_temp = st.slider(
+            "Temperature — 전략 일관성 ↔ 창의성",
+            min_value=0.3, max_value=1.0, value=0.65, step=0.05,
+            key="ui_strategy_temp",
+            help="낮을수록 일관된 전략, 높을수록 창의적·다양한 아이디어 생성",
         )
 
         st.divider()
@@ -325,7 +399,7 @@ def _render_sidebar() -> tuple[str, str, str]:
         st.markdown("**진행 상태**")
         st.info(_STAGE_LABEL.get(stage, stage))
 
-        return default_llm, strategy_llm, strategy_llm
+        return default_llm, strategy_llm, strategy_llm, extract_temp, strategy_temp
 
 
 # ── 탭 1: 제안전략 수립 ───────────────────────────────────────────
@@ -353,7 +427,13 @@ def _render_tab_strategy(cfg):
 
             st.success(f"파일 선택됨: {uploaded.name} ({size_mb:.1f}MB)")
             if st.button("🚀 자동 분석 시작 (STEP 1~3)", type="primary", width="stretch"):
-                _start_extraction(uploaded, cfg)
+                # 파일 바이트를 세션에 저장 후 rerun → 다음 사이클에서 사이드바가
+                # "STEP 1~3 자동 추출 중…"을 표시한 뒤 파이프라인을 실행한다.
+                st.session_state["_pending_rfp_bytes"] = uploaded.getvalue()
+                st.session_state["_pending_rfp_name"] = uploaded.name
+                st.session_state.stage = "extracting"
+                st.session_state.error_msg = ""
+                st.rerun()
 
     # ── STEP 2 비공식 요구사항 입력 ───────────────────────────────
     elif stage == "wait_step2":
@@ -375,10 +455,24 @@ def _render_tab_strategy(cfg):
         _show_previous_results()
         _render_step6_form(cfg)
 
-    # ── 처리 중 ───────────────────────────────────────────────────
-    elif stage in ("extracting", "generating"):
-        st.info(f"⏳ {_STAGE_LABEL[stage]}")
-        st.progress(0.5 if stage == "extracting" else 0.85)
+    # ── STEP 1~3 추출 실행 ────────────────────────────────────────
+    elif stage == "extracting":
+        if "_pending_rfp_bytes" in st.session_state:
+            # 이번 사이클에서 사이드바가 "STEP 1~3 자동 추출 중…"을 표시한 상태.
+            # 파이프라인을 실행하고 결과에 따라 stage를 갱신한다.
+            _run_extraction(cfg)
+        else:
+            st.info("⏳ STEP 1~3 자동 추출 중…")
+            st.progress(0.5)
+
+    # ── STEP 5~7 생성 중 ──────────────────────────────────────────
+    elif stage == "generating":
+        pending = st.session_state.pop("_pending_pm_update", None)
+        if pending is not None:
+            _do_generation(pending, cfg)
+        else:
+            st.info("⏳ STEP 5~7 전략 생성 중…")
+            st.progress(0.85)
 
     # ── 완료 ──────────────────────────────────────────────────────
     elif stage == "done":
@@ -425,19 +519,21 @@ def _show_previous_results():
             st.json(outputs.get("step2_formal_requirements", []))
         if "step3_eval_criteria" in outputs:
             st.markdown("**STEP 3: 평가항목 분석**")
-            st.json(outputs["step3_eval_criteria"])
+            _render_eval_criteria(outputs["step3_eval_criteria"])
 
 
-def _start_extraction(uploaded_file, cfg):
-    """RFP 파일 임시 저장 → LangGraph 스트림 시작 (STEP 1~3)."""
-    import traceback
+def _run_extraction(cfg):
+    """세션에 저장된 RFP 바이트로 LangGraph STEP 1~3을 실행.
 
-    st.session_state.stage = "extracting"
-    st.session_state.rfp_filename = uploaded_file.name
-    st.session_state.error_msg = ""
+    버튼 클릭(idle) → stage='extracting' + rerun → 이 함수 호출(extracting)
+    순서로 실행되어, 사이드바가 "STEP 1~3 자동 추출 중…"을 표시한 상태에서 처리된다.
+    """
+    rfp_bytes = st.session_state.pop("_pending_rfp_bytes")
+    rfp_name = st.session_state.pop("_pending_rfp_name", "RFP.pdf")
+    st.session_state.rfp_filename = rfp_name
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(uploaded_file.getvalue())
+        tmp.write(rfp_bytes)
         tmp_path = tmp.name
 
     try:
@@ -454,7 +550,6 @@ def _start_extraction(uploaded_file, cfg):
 
         st.session_state.step_outputs.update(outputs)
 
-        # 다음 interrupt 확인
         snapshot = app.get_state(config)
         next_nodes = list(snapshot.next) if snapshot.next else []
 
@@ -608,15 +703,24 @@ def _render_step6_form(cfg):
 
 
 def _parse_and_set(key: str, value: dict, next_stage: str, cfg):
-    """PM 입력값을 LangGraph 상태에 주입하고 다음 interrupt까지 실행."""
+    """PM 입력값을 미리 step_outputs에 저장 후 파이프라인 재개 예약."""
     st.session_state.step_outputs[key] = value
     _resume_after_pm({key: value}, next_stage, cfg)
 
 
 def _resume_after_pm(state_update: dict, next_stage: str, cfg):
-    """update_state + Command(resume=None) → 다음 interrupt 또는 END."""
-    from langgraph.types import Command
+    """PM 입력을 session_state에 예약하고 즉시 rerun.
 
+    rerun 후 사이드바가 next_stage를 먼저 표시하고,
+    _render_tab_strategy() 의 generating 분기에서 실제 파이프라인을 실행한다.
+    """
+    st.session_state["_pending_pm_update"] = state_update
+    st.session_state.stage = next_stage
+    st.rerun()
+
+
+def _do_generation(state_update: dict, cfg):
+    """예약된 PM 데이터를 LangGraph 상태에 주입하고 다음 interrupt 또는 END까지 실행."""
     try:
         from llm.factory import clear_cache
         clear_cache()
@@ -625,13 +729,14 @@ def _resume_after_pm(state_update: dict, next_stage: str, cfg):
         config = {"configurable": {"thread_id": st.session_state.thread_id}}
 
         app.update_state(config, state_update)
-        st.session_state.stage = next_stage
 
         result_container = st.container()
-        with st.spinner("처리 중…"):
-            outputs = _run_until_interrupt(app, Command(resume=None), config, result_container)
+        with st.spinner("⏳ 전략 생성 중… (수 분 소요될 수 있습니다)"):
+            outputs = _run_until_interrupt(app, None, config, result_container)
 
         st.session_state.step_outputs.update(outputs)
+        # PM이 직접 입력한 데이터는 passthrough 노드 출력보다 우선 — 덮어쓰기 방지
+        st.session_state.step_outputs.update(state_update)
 
         # 다음 interrupt 확인
         snapshot = app.get_state(config)
@@ -642,7 +747,6 @@ def _resume_after_pm(state_update: dict, next_stage: str, cfg):
         elif "pm_step6" in next_nodes:
             st.session_state.stage = "wait_step6"
         elif next_nodes:
-            # 알 수 없는 interrupt 노드 — 사용자에게 알리고 idle로 복귀
             log.warning("알 수 없는 interrupt 노드: %s", next_nodes)
             st.session_state.error_msg = f"예상치 못한 중단점: {next_nodes}. 개발자에게 문의하세요."
             st.session_state.stage = "idle"
@@ -693,7 +797,7 @@ def _render_done_screen():
         st.json(outputs.get("step2_informal_requirements", {}))
 
     with st.expander("STEP 3: 평가항목 분석"):
-        st.json(outputs.get("step3_eval_criteria", {}))
+        _render_eval_criteria(outputs.get("step3_eval_criteria", {}))
 
     with st.expander("STEP 4: 경쟁력 분석"):
         st.json(outputs.get("step4_competitiveness", {}))
@@ -882,11 +986,13 @@ def _render_slide_card(rank: int, r, topic: str, cfg):
 def main():
     _init_session()
 
-    default_llm, step5_llm, step7_llm = _render_sidebar()
+    default_llm, step5_llm, step7_llm, extract_temp, strategy_temp = _render_sidebar()
     cfg = _build_cfg(
         default_llm=default_llm,
         step5_llm=step5_llm,
         step7_llm=step7_llm,
+        extract_temp=extract_temp,
+        strategy_temp=strategy_temp,
     )
 
     tab1, tab2 = st.tabs(["📋 제안전략 수립", "🖼️ 슬라이드 샘플 검색"])
