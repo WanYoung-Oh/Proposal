@@ -1,0 +1,21 @@
+node_temperature:
+  extract_step1: 0.1
+  extract_step2_formal: 0.1
+  extract_step3: 0.1
+  pm_step2_informal: 0.2
+  pm_step4: 0.2
+  pm_step6: 0.3
+  generate_step5: 0.6
+  generate_step7: 0.65
+  slide_explainer: 0.3
+
+node_llm:
+  extract_step1: qwen_local
+  extract_step2_formal: qwen_local
+  extract_step3: qwen_local
+  pm_step2_informal: qwen_local
+  pm_step4: qwen_local
+  pm_step6: qwen_local
+  generate_step5: claude
+  generate_step7: claude
+  slide_explainer: qwen_local

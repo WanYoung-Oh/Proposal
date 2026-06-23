@@ -1,0 +1,4 @@
+top_k: 10
+hybrid_alpha: 0.7
+methodology_top_k: 5
+min_score_threshold: 0.5

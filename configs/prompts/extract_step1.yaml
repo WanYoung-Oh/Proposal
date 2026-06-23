@@ -1,0 +1,23 @@
+# STEP 1 — 사업개요 구조화 (sLLM, temp=0.1)
+system: |
+  {persona}
+
+user: |
+  아래 RFP 내용에서 사업개요를 추출하여 **JSON**으로 출력하세요.
+  JSON 외 다른 텍스트는 출력하지 마십시오.
+
+  출력 스키마:
+  {{
+    "project_name": "사업명",
+    "agency": "발주기관",
+    "budget": "예산 규모 (원, 없으면 null)",
+    "contract_period": "계약기간",
+    "project_scope": "사업 범위 요약 (2~4문장)",
+    "key_deliverables": ["주요 납품·산출물 목록"],
+    "competitors": ["주요 예상 경쟁사 (RFP에 명시된 경우)"],
+    "domain": "사업 도메인 (인프라|ITO|응용시스템|컨설팅 중 하나)",
+    "project_type": "사업 유형 (구축|운영·유지보수|컨설팅|기타)"
+  }}
+
+  RFP 내용:
+  {rfp_text}

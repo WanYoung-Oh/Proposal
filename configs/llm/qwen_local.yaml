@@ -1,0 +1,6 @@
+_target_: src.llm.qwen_local.QwenLocalLLM
+base_url: ${oc.env:LOCAL_LLM_BASE_URL,http://localhost:11434}
+model: mlx-community/Qwen3.5-9B-4bit
+temperature: 0.3
+max_tokens: 4096
+context_window: 32768

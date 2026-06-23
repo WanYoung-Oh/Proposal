@@ -1,0 +1,5 @@
+# @package _global_
+task:
+  name: ingest
+  render_slides: false
+  index_qdrant: true

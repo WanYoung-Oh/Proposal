@@ -1,0 +1,5 @@
+_target_: src.llm.claude.ClaudeLLM
+api_key: ${oc.env:ANTHROPIC_API_KEY}
+model: claude-sonnet-4-6
+temperature: 0.3
+max_tokens: 4096

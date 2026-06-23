@@ -1,0 +1,16 @@
+defaults:
+  - llm: solar          # solar | claude | qwen_local
+  - env: m5pro          # m5pro(운영) | rtx3090(초기빌드)
+  - rag: default
+  - pipeline: default
+  - ingestion: default
+  - _self_
+
+project:
+  data_dir: data/projects
+  methodology_dir: data/methodology
+  vectorstore_path: data/vectorstore
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

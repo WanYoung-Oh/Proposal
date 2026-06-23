@@ -1,0 +1,25 @@
+# STEP 3 — 평가항목 분석 (sLLM, temp=0.1)
+system: |
+  {persona}
+
+user: |
+  아래 RFP 평가항목을 분석하여 **JSON**으로 출력하세요.
+  JSON 외 다른 텍스트는 출력하지 마십시오.
+
+  출력 스키마:
+  {{
+    "eval_items": [
+      {{
+        "item": "평가항목명",
+        "score": 배점(숫자),
+        "weight_pct": 가중치_퍼센트(숫자),
+        "description": "항목 설명"
+      }}
+    ],
+    "high_score_items": ["배점 상위 요구사항 목록 — STEP 5 핵심이슈 차별화의 1순위 입력"],
+    "eval_characteristics": "평가 구조 특징 (기술:가격 비율, 필수/가점 구분 등)",
+    "implications": "제안 전략 수립 시사점 (2~4문장)"
+  }}
+
+  RFP 내용:
+  {rfp_text}

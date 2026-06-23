@@ -1,0 +1,9 @@
+role: build
+device: cuda
+embedding_device: cuda
+embedding_batch_size: 64
+reranker_device: cuda
+llm_backend: ollama
+llm_base_url: http://localhost:11434
+qdrant_host: ${oc.env:QDRANT_HOST,localhost}
+qdrant_port: ${oc.env:QDRANT_PORT,6333}

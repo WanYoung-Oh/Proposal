@@ -1,0 +1,9 @@
+role: production
+device: mps
+embedding_device: cpu
+embedding_batch_size: 16
+reranker_device: cpu
+llm_backend: mlx
+llm_base_url: http://localhost:11434
+qdrant_host: ${oc.env:QDRANT_HOST,localhost}
+qdrant_port: ${oc.env:QDRANT_PORT,6333}

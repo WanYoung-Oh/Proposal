@@ -1,0 +1,4 @@
+min_chunk_chars: 100
+proposals_collection: proposals
+methodology_collection: methodology
+embedding_model: BAAI/bge-m3

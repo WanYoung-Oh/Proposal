@@ -1,0 +1,5 @@
+_target_: src.llm.solar.SolarProLLM
+api_key: ${oc.env:SOLAR_API_KEY}
+model: solar-pro
+temperature: 0.3
+max_tokens: 4096

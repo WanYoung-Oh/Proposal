@@ -1,0 +1,5 @@
+# @package _global_
+task:
+  name: ingest_with_render
+  render_slides: true
+  index_qdrant: true

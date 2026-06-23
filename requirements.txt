@@ -1,0 +1,45 @@
+# ── LLM 클라이언트 ────────────────────────────────────────────────
+anthropic>=0.109.1          # Claude API (Anthropic)
+openai>=1.30.0              # Solar Pro API (OpenAI 호환) + Ollama OpenAI 호환
+
+# ── LangGraph / LangChain ─────────────────────────────────────────
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=0.1.0  # SqliteSaver — 세션 영속 체크포인트 (data/sessions.db)
+langchain>=0.3.0
+langchain-community>=0.3.0
+langchain-openai>=0.2.0     # Solar Pro / Ollama OpenAI 호환 래퍼
+
+# ── 설정 관리 ─────────────────────────────────────────────────────
+hydra-core>=1.3.0
+omegaconf>=2.3.0
+
+# ── RAG ───────────────────────────────────────────────────────────
+sentence-transformers>=3.0.0  # BAAI/bge-m3 임베딩 + bge-reranker-v2-m3 CrossEncoder
+qdrant-client>=1.9.0           # Qdrant 벡터 DB
+rank-bm25>=0.2.2               # BM25 Sparse 검색
+kiwipiepy>=0.18.0              # 한국어 형태소 분석 (BM25 쿼리 토크나이저)
+
+# ── 파일 파싱 ─────────────────────────────────────────────────────
+python-pptx>=1.0.0
+pdfplumber>=0.11.0
+pymupdf>=1.24.0
+
+# ── UI (MVP) ──────────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── 백엔드 API (최종 UI) ──────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9     # RFP 파일 업로드
+
+# ── 유틸리티 ─────────────────────────────────────────────────────
+httpx>=0.27.0
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+
+# ── Mac Mini M5 Pro 전용 (MLX 서빙) ──────────────────────────────
+mlx-lm>=0.19.0                # Apple Silicon 네이티브 LLM 서버 (mlx_lm.server)
+torch                         # MPS 자동 지원 (pip 기본 설치)
+
+# [RTX 3090 Linux — CUDA 12.1 — 초기 빌드 시 별도 실행]
+# pip install torch --index-url https://download.pytorch.org/whl/cu121
